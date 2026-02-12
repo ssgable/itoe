@@ -118,3 +118,10 @@
       run_once: true
       debug:
         msg: "CSV artifact created: {{ artifacts_dir }}/{{ report_name }}"
+
+    - name: Publish artifact
+      run_once: true
+      set_stats:
+        data:
+          csv_path: "{{ artifacts_dir }}/{{ report_name }}"
+          csv_content: "{{ lookup('file', artifacts_dir + '/' + report_name) }}"

@@ -26,7 +26,8 @@
         group: root
         mode: "0440"
         validate: "/usr/sbin/visudo -cf %s"
-    - name: Install authorized key for ansible user
-      ansible.builtin.authorized_key:
-        user: ansible
-        key: "{{ lookup('file', 'files/ansible_awx_key.pub') }}"
+- name: Install authorized key for ansible user
+  ansible.builtin.authorized_key:
+    user: ansible
+    key: "{{ awx_pubkey }}"
+

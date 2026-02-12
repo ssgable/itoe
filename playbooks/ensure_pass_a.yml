@@ -1,16 +1,18 @@
-- name: Ensure hosts can login with Password A (fallback Password B then change)
+- name: Ensure hosts can login with Password A (fallback Password B then change) + CSV Artifact
   hosts: all
   gather_facts: false
+  serial: 50  # ปรับได้ตาม network/limit
 
   vars:
-    login_user: "{{ ansible_user }}"
+    # REQUIRED (ใส่จาก AWX Extra Vars หรือ Vault)
     pass_a: "{{ pass_a }}"
     pass_b: "{{ pass_b }}"
 
+    # AWX artifact dir (ค่ามาตรฐานใน AWX EE)
+    artifacts_dir: "{{ awx_artifacts_dir | default('/runner/artifacts') }}"
+    report_name: "ssh_password_migration_report.csv"
+
   tasks:
-    # -------------------------------
-    # Try PASS A
-    # -------------------------------
     - name: Try SSH with Pass A
       ping:
       vars:
@@ -23,10 +25,7 @@
       set_fact:
         pass_a_ok: "{{ ping_a.ping | default('') == 'pong' }}"
 
-    # -------------------------------
-    # Try PASS B
-    # -------------------------------
-    - name: Try SSH with Pass B
+    - name: Try SSH with Pass B (only if Pass A failed)
       when: not pass_a_ok
       ping:
       vars:
@@ -40,10 +39,7 @@
       set_fact:
         pass_b_ok: "{{ ping_b.ping | default('') == 'pong' }}"
 
-    # -------------------------------
-    # Change password B -> A
-    # -------------------------------
-    - name: Change password from B to A
+    - name: Change password from B to A (only if Pass B works)
       when: (not pass_a_ok) and (pass_b_ok | default(false))
       delegate_to: localhost
       expect:
@@ -51,32 +47,74 @@
           sshpass -p "{{ pass_b }}" ssh
           -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          {{ login_user }}@{{ inventory_hostname }} passwd
+          {{ ansible_user }}@{{ inventory_hostname }} passwd
         responses:
           '(?i)(current|old).*password:': "{{ pass_b }}"
           '(?i)new.*password:': "{{ pass_a }}"
           '(?i)(retype|repeat).*new.*password:': "{{ pass_a }}"
         timeout: 180
+      register: chpass
+      ignore_errors: true
 
-    - name: Reset connection
+    - name: Reset connection after password change
       when: (not pass_a_ok) and (pass_b_ok | default(false))
       meta: reset_connection
 
-    # -------------------------------
-    # Verify PASS A again
-    # -------------------------------
-    - name: Verify SSH with Pass A
+    - name: Verify SSH with Pass A again (if needed)
       when: not pass_a_ok
       ping:
       vars:
         ansible_password: "{{ pass_a }}"
-      register: ping_final
+      register: ping_a2
       ignore_errors: true
       ignore_unreachable: true
 
-    - name: Final result
+    - name: Build per-host result facts
+      set_fact:
+        final_pass_a_ok: >-
+          {{
+            (ping_a.ping | default('') == 'pong')
+            or (ping_a2.ping | default('') == 'pong')
+          }}
+        used_pass_b: "{{ (not pass_a_ok) and (pass_b_ok | default(false)) }}"
+        changed_b_to_a: "{{ (chpass is defined) and (chpass is not failed) and (used_pass_b | default(false)) }}"
+        fail_reason: >-
+          {{
+            (ping_a.msg | default(''))
+            if (ping_a.ping | default('') != 'pong' and (ping_a2 is not defined))
+            else (ping_a2.msg | default(''))
+          }}
+
+    # ----------------------------
+    # CSV Artifact (run once)
+    # ----------------------------
+    - name: Ensure artifacts dir exists (controller)
+      run_once: true
+      delegate_to: localhost
+      file:
+        path: "{{ artifacts_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write CSV artifact report (controller)
+      run_once: true
+      delegate_to: localhost
+      copy:
+        dest: "{{ artifacts_dir }}/{{ report_name }}"
+        mode: "0644"
+        content: |
+          host,ansible_user,pass_a_ok,pass_b_ok,used_pass_b,changed_b_to_a,fail_reason
+          {% for h in ansible_play_hosts_all %}
+          {{ h }},
+          {{ (hostvars[h].ansible_user | default('')) }},
+          {{ (hostvars[h].final_pass_a_ok | default(false)) }},
+          {{ (hostvars[h].pass_b_ok | default(false)) }},
+          {{ (hostvars[h].used_pass_b | default(false)) }},
+          {{ (hostvars[h].changed_b_to_a | default(false)) }},
+          "{{ (hostvars[h].fail_reason | default('') | replace('\"','\"\"') | replace('\n',' ') ) }}"
+          {% endfor %}
+
+    - name: Show artifact path
+      run_once: true
       debug:
-        msg:
-          - "Host={{ inventory_hostname }}"
-          - "PASS_A_OK={{ (ping_final.ping | default(ping_a.ping|default(''))) == 'pong' }}"
-          - "RESULT={{ 'OK' if (ping_final.ping|default('')) == 'pong' else 'FAIL' }}"
+        msg: "CSV artifact created: {{ artifacts_dir }}/{{ report_name }}"

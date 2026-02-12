@@ -1,0 +1,12 @@
+# secrets / local inventories
+inventories/*.local.yml
+*.vault
+*.key
+*.pem
+
+# ansible artifacts
+*.retry
+*.log
+
+# editor
+.vscode/

@@ -1,0 +1,13 @@
+all:
+  children:
+    bootstrap:
+      hosts:
+        10.137.21.233:
+        10.137.21.234:
+        10.137.21.235:
+      vars:
+        ansible_user: sirapp45
+        ansible_password: "y#%%qt#89EVWxmKH05wf"
+        ansible_become: true
+        ansible_become_method: sudo
+        ansible_become_password: "y#%%qt#89EVWxmKH05wf"

@@ -26,23 +26,10 @@
         group: root
         mode: "0440"
         validate: "/usr/sbin/visudo -cf %s"
+
     - name: Install authorized key for ansible user
       ansible.builtin.authorized_key:
         user: ansible
         key: "{{ awx_pubkey }}"
-
-    - name: Send result to Teams
-      uri:
-        url: "{{ teams_webhook }}"
-        method: POST
-        body_format: json
-        body:
-          text: |
-            🚀 AWX Job Result
-            Job: {{ ansible_job_id | default('manual') }}
-            Hosts: {{ ansible_play_hosts_all }}
-            Status: SUCCESS
-      delegate_to: localhost
-      run_once: true
 
 

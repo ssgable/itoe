@@ -47,29 +47,29 @@
 
 # ------------------------------------------------------------
 
-- name: Pass migration: ensure Password A works (fallback Password B then change)
-  hosts: dynamic_targets
-  gather_facts: false
-  serial: 50
+    - name: Pass migration: ensure Password A works (fallback Password B then change)
+      hosts: dynamic_targets
+      gather_facts: false
+      serial: 50
 
-  vars:
-    # REQUIRED (ส่งจาก AWX Extra Vars หรือ Vault)
-    pass_a: "{{ pass_a }}"
-    pass_b: "{{ pass_b }}"
-
-    # Report settings
-    artifacts_dir: "{{ awx_artifacts_dir | default('/runner/artifacts') }}"
-    report_name: "{{ report_name | default('ssh_password_migration_report.csv') }}"
-
-  tasks:
-    - name: Try SSH with Pass A
-      ping:
       vars:
-        ansible_password: "{{ pass_a }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-      register: ping_a
-      ignore_errors: true
-      ignore_unreachable: true
+        # REQUIRED (ส่งจาก AWX Extra Vars หรือ Vault)
+        pass_a: "{{ pass_a }}"
+        pass_b: "{{ pass_b }}"
+
+        # Report settings
+        artifacts_dir: "{{ awx_artifacts_dir | default('/runner/artifacts') }}"
+        report_name: "{{ report_name | default('ssh_password_migration_report.csv') }}"
+
+      tasks:
+        - name: Try SSH with Pass A
+          ping:
+          vars:
+            ansible_password: "{{ pass_a }}"
+            ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          register: ping_a
+          ignore_errors: true
+          ignore_unreachable: true
 
     - name: Set pass_a_ok
       set_fact:
@@ -140,7 +140,8 @@
             else (ping_a2.msg | default(''))
           }}
 
-  post_tasks:
+        post_tasks:
+
     # Build CSV on controller once using hostvars
     - name: Ensure artifacts dir exists (controller)
       run_once: true
@@ -154,33 +155,34 @@
       run_once: true
       delegate_to: localhost
       set_fact:
-        csv_content: |
-          host,ansible_user,pass_a_ok,pass_b_ok,used_pass_b,changed_b_to_a,fail_reason
-          {% for h in ansible_play_hosts_all %}
-          {{ h }},{{ (hostvars[h].ansible_user | default('')) }},{{ (hostvars[h].final_pass_a_ok | default(false)) }},{{ (hostvars[h].pass_b_ok | default(false)) }},{{ (hostvars[h].used_pass_b | default(false)) }},{{ (hostvars[h].changed_b_to_a | default(false)) }},"{{ (hostvars[h].fail_reason | default('') | replace('\"','\"\"') | replace('\n',' ') ) }}"
-          {% endfor %}
+      csv_content: |
+        host,ansible_user,pass_a_ok,pass_b_ok,used_pass_b,changed_b_to_a,fail_reason
+        {% for h in ansible_play_hosts_all %}
+        {{ h }},{{ (hostvars[h].ansible_user | default('')) }},{{ (hostvars[h].final_pass_a_ok | default(false)) }},{{ (hostvars[h].pass_b_ok | default(false)) }},{{ (hostvars[h].used_pass_b | default(false)) }},{{ (hostvars[h].changed_b_to_a | default(false)) }},"{{ (hostvars[h].fail_reason | default('') | replace('\"','\"\"') | replace('\n',' ') ) }}"
+        {% endfor %}
 
     - name: Write CSV file into artifacts dir (controller)
       run_once: true
       delegate_to: localhost
       copy:
-        dest: "{{ artifacts_dir }}/{{ report_name }}"
-        mode: "0644"
-        content: "{{ csv_content }}"
+      dest: "{{ artifacts_dir }}/{{ report_name }}"
+      mode: "0644"
+      content: "{{ csv_content }}"
 
     # Publish to AWX Artifacts tab (so you can copy/paste without download)
     - name: Publish report to AWX artifacts (JSON)
       run_once: true
       set_stats:
-        data:
-          csv_path: "{{ artifacts_dir }}/{{ report_name }}"
-          csv_report: "{{ csv_content }}"
+      data:
+      csv_path: "{{ artifacts_dir }}/{{ report_name }}"
+      csv_report: "{{ csv_content }}"
 
     - name: Summary counts
       run_once: true
       delegate_to: localhost
       debug:
-        msg:
-          - "CSV saved: {{ artifacts_dir }}/{{ report_name }}"
-          - "OK(pass A) hosts: {{ ansible_play_hosts_all | map('extract', hostvars, 'final_pass_a_ok') | select('equalto', true) | list | length }}"
-          - "CHANGED(B->A) hosts: {{ ansible_play_hosts_all | map('extract', hostvars, 'changed_b_to_a') | select('equalto', true) | list | length }}"
+      msg:
+        - "CSV saved: {{ artifacts_dir }}/{{ report_name }}"
+        - "OK(pass A) hosts: {{ ansible_play_hosts_all | map('extract', hostvars, 'final_pass_a_ok') | select('equalto', true) | list | length }}"
+        - "CHANGED(B->A) hosts: {{ ansible_play_hosts_all | map('extract', hostvars, 'changed_b_to_a') | select('equalto', true) | list | length }}"
+        

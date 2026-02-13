@@ -1,6 +1,45 @@
+---
+############################################################
+# PLAY 1 — Load IP from ipdc.txt
+############################################################
+- name: Load hosts from ipdc.txt
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    ip_file_path: "{{ playbook_dir }}/../inventories/ipdc.txt"
+
+  tasks:
+
+    - name: Ensure ipdc.txt exists
+      stat:
+        path: "{{ ip_file_path }}"
+      register: ipfile
+
+    - name: Fail if ipdc.txt missing
+      fail:
+        msg: "ipdc.txt not found at {{ ip_file_path }}"
+      when: not ipfile.stat.exists
+
+    - name: Read IP list
+      set_fact:
+        ip_list: "{{ lookup('file', ip_file_path).splitlines()
+                     | reject('equalto','')
+                     | list }}"
+
+    - name: Add hosts dynamically
+      add_host:
+        name: "{{ item }}"
+        groups: ipdc_targets
+      loop: "{{ ip_list }}"
+
+
+############################################################
+# PLAY 2 — Bootstrap ansible user
+############################################################
 - name: Bootstrap ansible user (password mode)
-  hosts: all
-  gather_facts: yes
+  hosts: ipdc_targets
+  gather_facts: no
   become: yes
 
   vars:
@@ -10,16 +49,18 @@
     ansible_sudoers_content: "ansible ALL=(ALL) NOPASSWD: ALL"
 
   tasks:
+
     - name: Create ansible user
-      ansible.builtin.user:
+      user:
         name: "{{ ansible_bootstrap_user }}"
         shell: /bin/bash
         create_home: true
         groups: "{{ ansible_bootstrap_groups }}"
         append: true
+        state: present
 
-    - name: Configure passwordless sudo (validated)
-      ansible.builtin.copy:
+    - name: Configure passwordless sudo
+      copy:
         dest: "{{ ansible_sudoers_file }}"
         content: "{{ ansible_sudoers_content }}\n"
         owner: root
@@ -27,9 +68,15 @@
         mode: "0440"
         validate: "/usr/sbin/visudo -cf %s"
 
-    - name: Install authorized key for ansible user
-      ansible.builtin.authorized_key:
-        user: ansible
+    - name: Ensure .ssh directory exists
+      file:
+        path: "/home/{{ ansible_bootstrap_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_bootstrap_user }}"
+        group: "{{ ansible_bootstrap_user }}"
+        mode: "0700"
+
+    - name: Install authorized key
+      authorized_key:
+        user: "{{ ansible_bootstrap_user }}"
         key: "{{ awx_pubkey }}"
-
-

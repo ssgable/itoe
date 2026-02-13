@@ -47,21 +47,24 @@
 
 # ------------------------------------------------------------
 
-- name: "Pass migration: ensure Password A works (fallback Password B then change)"
-  hosts: dynamic_targets
-  gather_facts: false
-  serial: 50
+- name: Ensure Password A works (fallback Password B then change)
+  hosts: all
+  gather_facts: no
+  become: yes
 
   vars:
-    # REQUIRED (ส่งจาก AWX Extra Vars หรือ Vault)
-    pass_a: "{{ pass_a }}"
-    pass_b: "{{ pass_b }}"
-
     # Report settings
     artifacts_dir: "{{ awx_artifacts_dir | default('/runner/artifacts') }}"
     report_name: "{{ report_name | default('ssh_password_migration_report.csv') }}"
 
   tasks:
+    - name: Validate required vars
+      assert:
+        that:
+          - pass_a is defined
+          - pass_b is defined
+        fail_msg: "Missing required vars: pass_a/pass_b. Please set in AWX Extra Vars or Vault."
+
     - name: Try SSH with Pass A
       ping:
       vars:

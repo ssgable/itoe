@@ -9,8 +9,8 @@
   gather_facts: false
 
   vars:
-    # default: repo/inventories/ipdc.txt
-    target_file: "{{ target_file | default(playbook_dir ~ '/../inventories/ipdc.txt') }}"
+    default_target_file: "{{ playbook_dir ~ '/../inventories/ipdc.txt' }}"
+
     runtime_group: "dynamic_targets"
 
   tasks:

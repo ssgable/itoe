@@ -47,7 +47,7 @@
 
 # ------------------------------------------------------------
 
-    - name: "Pass migration: ensure Password A works (fallback Password B then change)""
+    - name: "Pass migration: ensure Password A works (fallback Password B then change)"
       hosts: dynamic_targets
       gather_facts: false
       serial: 50

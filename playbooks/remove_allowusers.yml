@@ -1,0 +1,31 @@
+---
+- name: Remove AllowUsers from sshd_config
+  hosts: all
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Remove all AllowUsers lines
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^AllowUsers'
+        state: absent
+        backup: yes
+      register: remove_result
+
+    - name: Validate sshd config
+      ansible.builtin.command: /usr/sbin/sshd -t
+      register: sshd_test
+      changed_when: false
+
+    - name: Reload sshd
+      ansible.builtin.service:
+        name: sshd
+        state: reloaded
+      when: sshd_test.rc == 0
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg:
+          - "AllowUsers removed: {{ remove_result.changed }}"
+          - "Validation rc: {{ sshd_test.rc }}"

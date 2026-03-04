@@ -1,15 +1,14 @@
 ---
-- name: Remove AllowUsers entry using IP list file (no AWX inventory needed)
-  hosts: localhost
+- name: Load IPs from file and build dynamic inventory
+  hosts: all
   gather_facts: false
+  run_once: true
 
   vars:
     ip_file: "{{ playbook_dir }}/../inventories/list_ip.ini"
-    sshd_config_path: /etc/ssh/sshd_config
-    allowusers_regex: '^\s*#?\s*AllowUsers\s+\*@10\.253\.136\.0/24\s*$'
 
   tasks:
-    - name: Read IP file
+    - name: Read IP file from project
       ansible.builtin.slurp:
         src: "{{ ip_file }}"
       register: ipfile_b64
@@ -24,17 +23,17 @@
             | list
           }}
 
-    - name: Show targets
-      ansible.builtin.debug:
-        var: target_ips
-
-    - name: Apply change on each target via dynamic add_host
+    - name: Add dynamic targets
       ansible.builtin.add_host:
         name: "{{ item }}"
         groups: dynamic_targets
       loop: "{{ target_ips }}"
 
-- name: Remove AllowUsers and restart sshd on targets
+    - name: Show targets
+      ansible.builtin.debug:
+        msg: "Targets loaded: {{ target_ips | length }} hosts"
+
+- name: Remove AllowUsers line and restart sshd on targets
   hosts: dynamic_targets
   gather_facts: false
 
@@ -43,8 +42,12 @@
   become_method: sudo
   become_user: root
 
+  vars:
+    sshd_config_path: /etc/ssh/sshd_config
+    allowusers_regex: '^\s*#?\s*AllowUsers\s+\*@10\.253\.136\.0/24\s*$'
+
   tasks:
-    - name: Remove AllowUsers *@10.253.136.0/24 line from sshd_config (including commented)
+    - name: Remove AllowUsers *@10.253.136.0/24 line (including commented)
       ansible.builtin.lineinfile:
         path: "{{ sshd_config_path }}"
         state: absent
@@ -52,7 +55,7 @@
         backup: true
       notify: Restart sshd
 
-    - name: Validate sshd_config syntax (fail fast if broken)
+    - name: Validate sshd_config syntax
       ansible.builtin.command: sshd -t -f "{{ sshd_config_path }}"
       changed_when: false
 

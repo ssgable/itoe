@@ -1,0 +1,44 @@
+---
+- name: Load IP list and create dynamic hosts
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    ip_file: "/runner/project/list_ip.ini"
+
+  tasks:
+
+    - name: Read IP list
+      set_fact:
+        targets: "{{ lookup('file', ip_file).splitlines() }}"
+
+    - name: Add hosts dynamically
+      add_host:
+        name: "{{ item }}"
+        groups: target_servers
+      loop: "{{ targets }}"
+
+- name: Remove AllowUsers entry
+  hosts: target_servers
+  gather_facts: false
+
+  remote_user: mars
+  become: yes
+  become_method: sudo
+
+  tasks:
+
+    - name: Remove AllowUsers line
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: absent
+        regexp: '^\s*#?\s*AllowUsers\s+\*@10\.253\.136\.0/24'
+
+    - name: Validate sshd config
+      command: sshd -t
+      changed_when: false
+
+    - name: Restart sshd
+      service:
+        name: sshd
+        state: restarted

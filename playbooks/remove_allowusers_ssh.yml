@@ -1,51 +1,58 @@
 ---
-- name: Emergency remove AllowUsers via raw ssh loop (AWX-friendly)
+- name: Emergency remove AllowUsers via raw ssh loop (AWX)
   hosts: localhost
   gather_facts: false
 
   vars:
-    # 1) prefer root repo: /runner/project/list_ip.ini
-    ip_file_primary: "{{ lookup('env','AWX_PROJECT_DIR') }}/list_ip.ini"
-    # 2) fallback: /runner/project/inventories/list_ip.ini
-    ip_file_fallback: "{{ lookup('env','AWX_PROJECT_DIR') }}/inventories/list_ip.ini"
-
     ssh_user: mars
     ssh_port: 22
 
-    # บรรทัดที่ต้องลบ (ทั้งแบบมี # นำหน้า)
-    allow_line: "AllowUsers *@10.253.136.0/24"
+    # บรรทัดที่ต้องลบ (ทั้งแบบปกติและแบบมี # นำหน้า)
+    allowusers_regex_1: '^[[:space:]]*AllowUsers[[:space:]]+\\*@10\\.253\\.136\\.0/24[[:space:]]*$'
+    allowusers_regex_2: '^[[:space:]]*#[[:space:]]*AllowUsers[[:space:]]+\\*@10\\.253\\.136\\.0/24[[:space:]]*$'
 
-    # คำสั่งฝั่ง remote (ทำแบบ atomic: backup -> remove -> validate -> restart)
+    # คำสั่งฝั่ง remote: backup -> remove -> validate -> restart
     remote_cmd: >-
       set -e;
       CFG=/etc/ssh/sshd_config;
       TS=$(date +%Y%m%d%H%M%S);
       sudo -n cp -p "$CFG" "$CFG.bak.$TS";
       sudo -n sed -i
-      -e '/^[[:space:]]*AllowUsers[[:space:]]+\*@10\.253\.136\.0\/24[[:space:]]*$/d'
-      -e '/^[[:space:]]*#[[:space:]]*AllowUsers[[:space:]]+\*@10\.253\.136\.0\/24[[:space:]]*$/d'
+      -e "/{{ allowusers_regex_1 }}/d"
+      -e "/{{ allowusers_regex_2 }}/d"
       "$CFG";
       sudo -n sshd -t -f "$CFG";
       (sudo -n systemctl restart sshd || sudo -n service sshd restart);
       echo OK
 
   tasks:
-    - name: Pick IP file that exists
+    # --- Detect project directory (AWX normally uses /runner/project)
+    - name: Set project_dir candidates
       ansible.builtin.set_fact:
-        ip_file: "{{ ip_file_primary }}"
-      when: lookup('ansible.builtin.fileglob', ip_file_primary, wantlist=True) | length > 0
+        project_dir_candidates:
+          - "/runner/project"
+          - "{{ playbook_dir }}/.."
 
-    - name: Use fallback IP file if primary not found
+    - name: Find IP file path from candidates
       ansible.builtin.set_fact:
-        ip_file: "{{ ip_file_fallback }}"
-      when: ip_file is not defined
+        ip_file: "{{ item }}/inventories/list_ip.ini"
+      when: lookup('ansible.builtin.fileglob', item ~ '/inventories/list_ip.ini', wantlist=True) | length > 0
+      loop: "{{ project_dir_candidates }}"
+
+    - name: Fallback to root list_ip.ini if inventories path not found
+      ansible.builtin.set_fact:
+        ip_file: "{{ item }}/list_ip.ini"
+      when:
+        - ip_file is not defined
+        - lookup('ansible.builtin.fileglob', item ~ '/list_ip.ini', wantlist=True) | length > 0
+      loop: "{{ project_dir_candidates }}"
 
     - name: Fail if IP file not found
       ansible.builtin.fail:
-        msg: "IP file not found. Looked for: {{ ip_file_primary }} and {{ ip_file_fallback }}"
+        msg: "IP file not found. Put it at /runner/project/inventories/list_ip.ini or /runner/project/list_ip.ini"
       when: ip_file is not defined
 
-    - name: Read targets
+    - name: Read targets from ip_file
       ansible.builtin.set_fact:
         targets: >-
           {{
@@ -60,6 +67,10 @@
         msg: "No IPs found in {{ ip_file }}"
       when: targets | length == 0
 
+    - name: Show ip_file + count
+      ansible.builtin.debug:
+        msg: "Using ip_file={{ ip_file }} targets={{ targets | length }}"
+
     - name: Execute change via SSH on each host
       ansible.builtin.command: >
         ssh -o BatchMode=yes
@@ -70,11 +81,10 @@
             "{{ remote_cmd }}"
       register: run_out
       changed_when: "'OK' in run_out.stdout"
-      failed_when: run_out.rc != 0
       loop: "{{ targets }}"
 
-    - name: Summary
+    - name: Print failed hosts (if any)
       ansible.builtin.debug:
-        msg: |
-          Done. Targets={{ targets|length }}
-          Last stdout={{ run_out.results[-1].stdout | default('') }}
+        msg: "FAILED: {{ item.item }} => rc={{ item.rc }} stderr={{ item.stderr | default('') }}"
+      when: item.rc != 0
+      loop: "{{ run_out.results | default([]) }}"

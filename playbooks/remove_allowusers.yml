@@ -1,3 +1,14 @@
+- name: Connectivity test from AWX job runner
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Test TCP/22 to target
+      shell: "timeout 3 bash -lc '</dev/tcp/10.253.199.34/22' && echo OK || echo FAIL"
+      register: t
+      changed_when: false
+    - debug:
+        var: t.stdout
+
 ---
 - name: Load IP list and create dynamic hosts
   hosts: localhost

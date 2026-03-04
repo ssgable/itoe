@@ -1,0 +1,63 @@
+---
+- name: Diagnose network from AWX job runner to targets
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # อ่านไฟล์ ip list แบบเดียวกับที่ใช้จริง
+    ip_file_candidates:
+      - "/runner/project/inventories/list_ip.ini"
+      - "/runner/project/list_ip.ini"
+    ssh_port: 22
+    timeout_sec: 5
+    sample_n: 5   # เอาแค่ 5 เครื่องแรกพอ จะได้รู้เร็ว
+
+  tasks:
+    - name: Find ip file
+      ansible.builtin.set_fact:
+        ip_file: "{{ item }}"
+      when: lookup('ansible.builtin.fileglob', item, wantlist=True) | length > 0
+      loop: "{{ ip_file_candidates }}"
+
+    - name: Fail if ip file not found
+      ansible.builtin.fail:
+        msg: "IP file not found under /runner/project. Put list at inventories/list_ip.ini or list_ip.ini"
+      when: ip_file is not defined
+
+    - name: Read targets
+      ansible.builtin.set_fact:
+        targets: >-
+          {{
+            lookup('ansible.builtin.file', ip_file).splitlines()
+            | map('trim')
+            | reject('match', '^(#|;|\\s*$|\\[.*\\])')
+            | list
+          }}
+
+    - name: Show runner network identity (ip addr)
+      ansible.builtin.command: sh -lc "hostname; ip -br addr; echo '---'; ip route | head -n 30"
+      register: netinfo
+      changed_when: false
+
+    - ansible.builtin.debug:
+        var: netinfo.stdout_lines
+
+    - name: Take sample targets
+      ansible.builtin.set_fact:
+        sample_targets: "{{ targets[:sample_n] }}"
+
+    - name: Route + TCP/22 test for sample targets
+      ansible.builtin.command: >
+        sh -lc "
+        echo '== {{ item }} ==';
+        ip route get {{ item }} || true;
+        timeout {{ timeout_sec }} bash -lc '</dev/tcp/{{ item }}/{{ ssh_port }}' \
+          && echo 'TCP22:OK' || echo 'TCP22:FAIL';
+        "
+      loop: "{{ sample_targets }}"
+      register: checks
+      changed_when: false
+      ignore_errors: true
+
+    - ansible.builtin.debug:
+        var: checks.results

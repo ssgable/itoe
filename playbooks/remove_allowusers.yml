@@ -1,12 +1,42 @@
 ---
-- name: Remove AllowUsers entry and restart sshd
-  hosts: targets
+- name: Remove AllowUsers entry using IP list file (no AWX inventory needed)
+  hosts: localhost
   gather_facts: false
 
   vars:
+    ip_file: "{{ playbook_dir }}/../inventories/list_ip.ini"
     sshd_config_path: /etc/ssh/sshd_config
-    # ลบทั้งแบบปกติและแบบมี # คอมเมนต์นำหน้า
     allowusers_regex: '^\s*#?\s*AllowUsers\s+\*@10\.253\.136\.0/24\s*$'
+
+  tasks:
+    - name: Read IP file
+      ansible.builtin.slurp:
+        src: "{{ ip_file }}"
+      register: ipfile_b64
+
+    - name: Build target IP list (ignore blanks, comments, [groups])
+      ansible.builtin.set_fact:
+        target_ips: >-
+          {{
+            (ipfile_b64.content | b64decode).splitlines()
+            | map('trim')
+            | reject('match', '^(#|;|\\s*$|\\[.*\\])')
+            | list
+          }}
+
+    - name: Show targets
+      ansible.builtin.debug:
+        var: target_ips
+
+    - name: Apply change on each target via dynamic add_host
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: dynamic_targets
+      loop: "{{ target_ips }}"
+
+- name: Remove AllowUsers and restart sshd on targets
+  hosts: dynamic_targets
+  gather_facts: false
 
   remote_user: mars
   become: true
@@ -14,7 +44,7 @@
   become_user: root
 
   tasks:
-    - name: Remove AllowUsers *@10.253.136.0/24 line from sshd_config
+    - name: Remove AllowUsers *@10.253.136.0/24 line from sshd_config (including commented)
       ansible.builtin.lineinfile:
         path: "{{ sshd_config_path }}"
         state: absent
@@ -22,14 +52,12 @@
         backup: true
       notify: Restart sshd
 
-    - name: Validate sshd_config syntax (fails fast if broken)
+    - name: Validate sshd_config syntax (fail fast if broken)
       ansible.builtin.command: sshd -t -f "{{ sshd_config_path }}"
       changed_when: false
 
   handlers:
     - name: Restart sshd
-      # รองรับทั้ง systemd / service
       ansible.builtin.service:
         name: sshd
         state: restarted
-      listen: Restart sshd

@@ -1,5 +1,5 @@
 ---
-- name: Load IPs from file and build dynamic inventory
+- name: Load IPs from repo file on AWX controller and build dynamic inventory
   hosts: all
   gather_facts: false
   run_once: true
@@ -8,30 +8,35 @@
     ip_file: "{{ playbook_dir }}/../inventories/list_ip.ini"
 
   tasks:
-    - name: Read IP file from project
-      ansible.builtin.slurp:
-        src: "{{ ip_file }}"
-      register: ipfile_b64
-
-    - name: Build target IP list (ignore blanks, comments, [groups])
+    - name: Read IP list from repo (controller-side)
       ansible.builtin.set_fact:
         target_ips: >-
           {{
-            (ipfile_b64.content | b64decode).splitlines()
+            lookup('ansible.builtin.file', ip_file)
+            .splitlines()
             | map('trim')
             | reject('match', '^(#|;|\\s*$|\\[.*\\])')
             | list
           }}
+      delegate_to: localhost
+
+    - name: Fail if no IPs found
+      ansible.builtin.fail:
+        msg: "No IPs found in {{ ip_file }} (check file path and Project sync)"
+      when: target_ips | length == 0
+      delegate_to: localhost
 
     - name: Add dynamic targets
       ansible.builtin.add_host:
         name: "{{ item }}"
         groups: dynamic_targets
       loop: "{{ target_ips }}"
+      delegate_to: localhost
 
-    - name: Show targets
+    - name: Show targets loaded
       ansible.builtin.debug:
-        msg: "Targets loaded: {{ target_ips | length }} hosts"
+        var: target_ips
+      delegate_to: localhost
 
 - name: Remove AllowUsers line and restart sshd on targets
   hosts: dynamic_targets

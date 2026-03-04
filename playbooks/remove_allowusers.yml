@@ -1,3 +1,4 @@
+---
 - name: Connectivity test from AWX job runner
   hosts: localhost
   gather_facts: false
@@ -9,7 +10,7 @@
     - debug:
         var: t.stdout
 
----
+
 - name: Load IP list and create dynamic hosts
   hosts: localhost
   gather_facts: false

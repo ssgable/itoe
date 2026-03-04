@@ -1,31 +1,35 @@
 ---
-- name: Remove AllowUsers from sshd_config
-  hosts: all
+- name: Remove AllowUsers entry and restart sshd
+  hosts: targets
   gather_facts: false
+
+  vars:
+    sshd_config_path: /etc/ssh/sshd_config
+    # ลบทั้งแบบปกติและแบบมี # คอมเมนต์นำหน้า
+    allowusers_regex: '^\s*#?\s*AllowUsers\s+\*@10\.253\.136\.0/24\s*$'
+
+  remote_user: mars
   become: true
+  become_method: sudo
+  become_user: root
 
   tasks:
-    - name: Remove all AllowUsers lines
+    - name: Remove AllowUsers *@10.253.136.0/24 line from sshd_config
       ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^AllowUsers'
+        path: "{{ sshd_config_path }}"
         state: absent
-        backup: yes
-      register: remove_result
+        regexp: "{{ allowusers_regex }}"
+        backup: true
+      notify: Restart sshd
 
-    - name: Validate sshd config
-      ansible.builtin.command: /usr/sbin/sshd -t
-      register: sshd_test
+    - name: Validate sshd_config syntax (fails fast if broken)
+      ansible.builtin.command: sshd -t -f "{{ sshd_config_path }}"
       changed_when: false
 
-    - name: Reload sshd
+  handlers:
+    - name: Restart sshd
+      # รองรับทั้ง systemd / service
       ansible.builtin.service:
         name: sshd
-        state: reloaded
-      when: sshd_test.rc == 0
-
-    - name: Show result
-      ansible.builtin.debug:
-        msg:
-          - "AllowUsers removed: {{ remove_result.changed }}"
-          - "Validation rc: {{ sshd_test.rc }}"
+        state: restarted
+      listen: Restart sshd
